@@ -1,0 +1,395 @@
+USE [KabinetPsychologist];
+GO
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+GO
+
+-- 1. Reference tables
+IF OBJECT_ID(N'dbo.Formats','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Formats(
+    FormatID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL
+  );
+END
+GO
+
+IF OBJECT_ID(N'dbo.ProblemCategories','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.ProblemCategories(
+    CategoryID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(200) NOT NULL,
+    Description NVARCHAR(MAX) NULL
+  );
+  CREATE UNIQUE INDEX UQ_ProblemCategories_Name ON dbo.ProblemCategories(Name);
+END
+GO
+
+IF OBJECT_ID(N'dbo.Specializations','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Specializations(
+    SpecializationID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(200) NOT NULL,
+    Description NVARCHAR(MAX) NULL
+  );
+  CREATE UNIQUE INDEX UQ_Specializations_Name ON dbo.Specializations(Name);
+END
+GO
+
+-- 2. Core entities
+IF OBJECT_ID(N'dbo.Clients','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Clients(
+    ClientID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    FullName NVARCHAR(200) NOT NULL,
+    BirthDate DATE NOT NULL,
+    Phone NVARCHAR(50) NULL,
+    Email NVARCHAR(256) NULL,
+    CONSTRAINT CK_Clients_BirthDate_Past CHECK (BirthDate <= CAST(GETDATE() AS date))
+  );
+END
+GO
+
+IF OBJECT_ID(N'dbo.Psychologists','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Psychologists(
+    PsychologistID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    FullName NVARCHAR(200) NOT NULL,
+    SpecializationID INT NOT NULL,
+    ExperienceYears INT NOT NULL,
+    Fee MONEY NOT NULL,
+    Phone NVARCHAR(50) NULL,
+    Email NVARCHAR(256) NULL,
+    CONSTRAINT CK_Psychologists_Experience_NonNegative CHECK (ExperienceYears >= 0)
+  );
+  ALTER TABLE dbo.Psychologists
+    ADD CONSTRAINT FK_Psychologists_Specializations FOREIGN KEY (SpecializationID) REFERENCES dbo.Specializations(SpecializationID);
+END
+ELSE
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Psychologists') AND referenced_object_id=OBJECT_ID(N'dbo.Specializations'))
+    ALTER TABLE dbo.Psychologists ADD CONSTRAINT FK_Psychologists_Specializations FOREIGN KEY (SpecializationID) REFERENCES dbo.Specializations(SpecializationID);
+END
+GO
+
+IF OBJECT_ID(N'dbo.Services','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Services(
+    ServiceID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(200) NOT NULL,
+    CategoryID INT NOT NULL,
+    DurationMin INT NOT NULL,
+    Description NVARCHAR(MAX) NULL,
+    Price MONEY NULL,
+    FormatID INT NULL
+  );
+  ALTER TABLE dbo.Services ADD CONSTRAINT FK_Services_Categories FOREIGN KEY (CategoryID) REFERENCES dbo.ProblemCategories(CategoryID);
+  ALTER TABLE dbo.Services ADD CONSTRAINT FK_Services_Formats FOREIGN KEY (FormatID) REFERENCES dbo.Formats(FormatID);
+  CREATE INDEX IX_Services_Name ON dbo.Services(Name);
+END
+ELSE
+BEGIN
+  IF COL_LENGTH('dbo.Services','FormatID') IS NULL
+    ALTER TABLE dbo.Services ADD FormatID INT NULL;
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Services') AND referenced_object_id=OBJECT_ID(N'dbo.ProblemCategories'))
+    ALTER TABLE dbo.Services ADD CONSTRAINT FK_Services_Categories FOREIGN KEY (CategoryID) REFERENCES dbo.ProblemCategories(CategoryID);
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Services') AND referenced_object_id=OBJECT_ID(N'dbo.Formats'))
+    ALTER TABLE dbo.Services ADD CONSTRAINT FK_Services_Formats FOREIGN KEY (FormatID) REFERENCES dbo.Formats(FormatID);
+  IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.Services') AND name=N'IX_Services_Name')
+    CREATE INDEX IX_Services_Name ON dbo.Services(Name);
+END
+GO
+
+IF OBJECT_ID(N'dbo.Sessions','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Sessions(
+    SessionID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    PsychologistID INT NOT NULL,
+    ClientID INT NOT NULL,
+    ServiceID INT NOT NULL,
+    SessionDateTime DATETIME2(7) NOT NULL,
+    PaymentStatus BIT NOT NULL CONSTRAINT DF_Sessions_PaymentStatus DEFAULT(0)
+  );
+  ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Psychologists FOREIGN KEY (PsychologistID) REFERENCES dbo.Psychologists(PsychologistID);
+  ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Clients FOREIGN KEY (ClientID) REFERENCES dbo.Clients(ClientID);
+  ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Services FOREIGN KEY (ServiceID) REFERENCES dbo.Services(ServiceID);
+  CREATE UNIQUE INDEX UQ_Sessions_Psychologist_Time ON dbo.Sessions(PsychologistID, SessionDateTime);
+END
+ELSE
+BEGIN
+  IF COL_LENGTH('dbo.Sessions','PaymentStatus') IS NULL
+    ALTER TABLE dbo.Sessions ADD PaymentStatus BIT NOT NULL CONSTRAINT DF_Sessions_PaymentStatus DEFAULT(0);
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Sessions') AND referenced_object_id=OBJECT_ID(N'dbo.Psychologists'))
+    ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Psychologists FOREIGN KEY (PsychologistID) REFERENCES dbo.Psychologists(PsychologistID);
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Sessions') AND referenced_object_id=OBJECT_ID(N'dbo.Clients'))
+    ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Clients FOREIGN KEY (ClientID) REFERENCES dbo.Clients(ClientID);
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Sessions') AND referenced_object_id=OBJECT_ID(N'dbo.Services'))
+    ALTER TABLE dbo.Sessions ADD CONSTRAINT FK_Sessions_Services FOREIGN KEY (ServiceID) REFERENCES dbo.Services(ServiceID);
+  IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.Sessions') AND name=N'UQ_Sessions_Psychologist_Time')
+    CREATE UNIQUE INDEX UQ_Sessions_Psychologist_Time ON dbo.Sessions(PsychologistID, SessionDateTime);
+END
+GO
+
+IF OBJECT_ID(N'dbo.Payments','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Payments(
+    PaymentID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    SessionID INT NOT NULL,
+    Amount MONEY NOT NULL,
+    PaymentDate DATETIME2(7) NOT NULL,
+    Method NVARCHAR(100) NULL
+  );
+  ALTER TABLE dbo.Payments ADD CONSTRAINT FK_Payments_Sessions FOREIGN KEY (SessionID) REFERENCES dbo.Sessions(SessionID);
+END
+ELSE
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.Payments') AND referenced_object_id=OBJECT_ID(N'dbo.Sessions'))
+    ALTER TABLE dbo.Payments ADD CONSTRAINT FK_Payments_Sessions FOREIGN KEY (SessionID) REFERENCES dbo.Sessions(SessionID);
+END
+GO
+
+IF OBJECT_ID(N'dbo.Reviews','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Reviews(
+    ReviewID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    ClientID INT NOT NULL,
+    PsychologistID INT NOT NULL,
+    ServiceID INT NULL,
+    Rating TINYINT NOT NULL CHECK (Rating BETWEEN 1 AND 5),
+    Text NVARCHAR(MAX) NULL,
+    CreatedAt DATETIME2(7) NOT NULL DEFAULT SYSUTCDATETIME()
+  );
+  ALTER TABLE dbo.Reviews ADD CONSTRAINT FK_Reviews_Clients FOREIGN KEY (ClientID) REFERENCES dbo.Clients(ClientID);
+  ALTER TABLE dbo.Reviews ADD CONSTRAINT FK_Reviews_Psychologists FOREIGN KEY (PsychologistID) REFERENCES dbo.Psychologists(PsychologistID);
+  ALTER TABLE dbo.Reviews ADD CONSTRAINT FK_Reviews_Services FOREIGN KEY (ServiceID) REFERENCES dbo.Services(ServiceID);
+END
+GO
+
+-- 3. Audit table
+IF OBJECT_ID(N'dbo.SessionAudit','U') IS NULL
+BEGIN
+  CREATE TABLE dbo.SessionAudit(
+    AuditID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Operation NVARCHAR(10) NOT NULL, -- INSERT/UPDATE/DELETE
+    SessionID INT NULL,
+    OldPaymentStatus BIT NULL,
+    NewPaymentStatus BIT NULL,
+    OldSessionDateTime DATETIME2(7) NULL,
+    NewSessionDateTime DATETIME2(7) NULL,
+    [User] SYSNAME NULL,
+    OperationAt DATETIME2(7) NOT NULL DEFAULT SYSUTCDATETIME()
+  );
+END
+GO
+
+-- 4. Stored procedure and views (english names)
+CREATE OR ALTER PROCEDURE dbo.usp_AddSession
+  @PsychologistID INT,
+  @ClientID INT,
+  @ServiceID INT,
+  @SessionDT DATETIME2(7)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  BEGIN TRY
+    IF EXISTS (SELECT 1 FROM dbo.Sessions WHERE PsychologistID=@PsychologistID AND SessionDateTime=@SessionDT)
+      THROW 50001, N'Psychologist already has a session at this time.', 1;
+
+    INSERT INTO dbo.Sessions (PsychologistID, ClientID, ServiceID, SessionDateTime, PaymentStatus)
+    VALUES (@PsychologistID, @ClientID, @ServiceID, @SessionDT, 0);
+
+    SELECT CAST(SCOPE_IDENTITY() AS INT) AS SessionID;
+  END TRY
+  BEGIN CATCH
+    DECLARE @msg NVARCHAR(4000)=ERROR_MESSAGE();
+    RAISERROR(@msg,16,1);
+  END CATCH
+END
+GO
+
+CREATE OR ALTER VIEW dbo.vw_SessionSchedule AS
+SELECT s.SessionID, p.FullName AS Psychologist, c.FullName AS Client, sv.Name AS Service, s.SessionDateTime, s.PaymentStatus
+FROM dbo.Sessions s
+JOIN dbo.Psychologists p ON s.PsychologistID = p.PsychologistID
+JOIN dbo.Clients c ON s.ClientID = c.ClientID
+LEFT JOIN dbo.Services sv ON s.ServiceID = sv.ServiceID;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ClientDebts AS
+SELECT c.ClientID, c.FullName, COUNT(s.SessionID) AS UnpaidSessions,
+       SUM(COALESCE(sv.Price, ph.Fee,0)) AS DebtAmount
+FROM dbo.Sessions s
+JOIN dbo.Clients c ON s.ClientID = c.ClientID
+LEFT JOIN dbo.Services sv ON s.ServiceID = sv.ServiceID
+LEFT JOIN dbo.Psychologists ph ON s.PsychologistID = ph.PsychologistID
+WHERE s.PaymentStatus = 0
+GROUP BY c.ClientID, c.FullName;
+GO
+
+-- 5. Triggers
+CREATE OR ALTER TRIGGER dbo.trg_Sessions_Audit
+ON dbo.Sessions
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  -- INSERT: record old = inserted values to avoid NULLs (per request)
+  INSERT INTO dbo.SessionAudit(Operation, SessionID, OldPaymentStatus, NewPaymentStatus, OldSessionDateTime, NewSessionDateTime, [User], OperationAt)
+  SELECT N'INSERT', i.SessionID, COALESCE(i.PaymentStatus,0), COALESCE(i.PaymentStatus,0), COALESCE(i.SessionDateTime,'1900-01-01'), i.SessionDateTime, SUSER_SNAME(), SYSUTCDATETIME()
+  FROM inserted i
+  LEFT JOIN deleted d ON d.SessionID = i.SessionID
+  WHERE d.SessionID IS NULL;
+
+  -- UPDATE
+  INSERT INTO dbo.SessionAudit(Operation, SessionID, OldPaymentStatus, NewPaymentStatus, OldSessionDateTime, NewSessionDateTime, [User], OperationAt)
+  SELECT N'UPDATE', i.SessionID, COALESCE(d.PaymentStatus,i.PaymentStatus,0), COALESCE(i.PaymentStatus,0), COALESCE(d.SessionDateTime,i.SessionDateTime,'1900-01-01'), COALESCE(i.SessionDateTime,'1900-01-01'), SUSER_SNAME(), SYSUTCDATETIME()
+  FROM inserted i
+  INNER JOIN deleted d ON d.SessionID = i.SessionID;
+
+  -- DELETE
+  INSERT INTO dbo.SessionAudit(Operation, SessionID, OldPaymentStatus, OldSessionDateTime, [User], OperationAt)
+  SELECT N'DELETE', d.SessionID, COALESCE(d.PaymentStatus,0), COALESCE(d.SessionDateTime,'1900-01-01'), SUSER_SNAME(), SYSUTCDATETIME()
+  FROM deleted d
+  LEFT JOIN inserted i ON i.SessionID = d.SessionID
+  WHERE i.SessionID IS NULL;
+END
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_Payments_UpdateStatus
+ON dbo.Payments
+AFTER INSERT
+AS
+BEGIN
+  SET NOCOUNT ON;
+  ;WITH ChangedSessions AS (
+    SELECT DISTINCT SessionID FROM inserted WHERE SessionID IS NOT NULL
+  )
+  UPDATE s
+  SET PaymentStatus = CASE WHEN paid.TotalPaid >= due.DueAmount AND due.DueAmount > 0 THEN 1 ELSE 0 END
+  FROM dbo.Sessions s
+  INNER JOIN ChangedSessions ch ON s.SessionID = ch.SessionID
+  CROSS APPLY (
+    SELECT ISNULL(SUM(o.Amount),0) AS TotalPaid FROM dbo.Payments o WHERE o.SessionID = ch.SessionID
+  ) paid
+  CROSS APPLY (
+    SELECT TOP(1) COALESCE(sv.Price, ph.Fee, 0) AS DueAmount
+    FROM dbo.Sessions ss
+    LEFT JOIN dbo.Services sv ON ss.ServiceID = sv.ServiceID
+    LEFT JOIN dbo.Psychologists ph ON ss.PsychologistID = ph.PsychologistID
+    WHERE ss.SessionID = ch.SessionID
+  ) due;
+END
+GO
+
+-- 6. Roles and grants
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name=N'role_admin' AND type='R')
+  EXEC('CREATE ROLE [role_admin]');
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name=N'role_psychologist' AND type='R')
+  EXEC('CREATE ROLE [role_psychologist]');
+GO
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::dbo TO [role_admin];
+GRANT EXECUTE ON SCHEMA::dbo TO [role_admin];
+GRANT SELECT ON SCHEMA::dbo TO [role_psychologist];
+GRANT INSERT, UPDATE ON OBJECT::dbo.Sessions TO [role_psychologist];
+GRANT INSERT, UPDATE ON OBJECT::dbo.Clients TO [role_psychologist];
+IF OBJECT_ID(N'dbo.usp_AddSession','P') IS NOT NULL
+  GRANT EXECUTE ON OBJECT::dbo.usp_AddSession TO [role_psychologist];
+GO
+
+-- 7. Insert reference and sample data (idempotent)
+
+-- Formats
+IF NOT EXISTS (SELECT 1 FROM dbo.Formats WHERE Name = N'Offline') INSERT dbo.Formats(Name) VALUES (N'Offline');
+IF NOT EXISTS (SELECT 1 FROM dbo.Formats WHERE Name = N'Online') INSERT dbo.Formats(Name) VALUES (N'Online');
+IF NOT EXISTS (SELECT 1 FROM dbo.Formats WHERE Name = N'Phone') INSERT dbo.Formats(Name) VALUES (N'Phone');
+GO
+
+-- Categories
+IF NOT EXISTS (SELECT 1 FROM dbo.ProblemCategories WHERE Name = N'AnxietyAndDepression') INSERT dbo.ProblemCategories(Name,Description) VALUES (N'AnxietyAndDepression',N'Anxiety, panic, phobias');
+IF NOT EXISTS (SELECT 1 FROM dbo.ProblemCategories WHERE Name = N'Relationships') INSERT dbo.ProblemCategories(Name,Description) VALUES (N'Relationships',N'Couples and family issues');
+IF NOT EXISTS (SELECT 1 FROM dbo.ProblemCategories WHERE Name = N'PersonalGrowth') INSERT dbo.ProblemCategories(Name,Description) VALUES (N'PersonalGrowth',N'Personal development and self-esteem');
+IF NOT EXISTS (SELECT 1 FROM dbo.ProblemCategories WHERE Name = N'WorkBurnout') INSERT dbo.ProblemCategories(Name,Description) VALUES (N'WorkBurnout',N'Work-related burnout');
+IF NOT EXISTS (SELECT 1 FROM dbo.ProblemCategories WHERE Name = N'Parenting') INSERT dbo.ProblemCategories(Name,Description) VALUES (N'Parenting',N'Parent-child relationships');
+GO
+
+-- Specializations
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'CBT') INSERT dbo.Specializations(Name,Description) VALUES (N'CBT',N'Cognitive Behavioral Therapy');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'Gestalt') INSERT dbo.Specializations(Name,Description) VALUES (N'Gestalt',N'Gestalt therapy');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'FamilyTherapy') INSERT dbo.Specializations(Name,Description) VALUES (N'FamilyTherapy',N'Family work');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'ChildPsychology') INSERT dbo.Specializations(Name,Description) VALUES (N'ChildPsychology',N'Work with children');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'Organizational') INSERT dbo.Specializations(Name,Description) VALUES (N'Organizational',N'Work and career');
+GO
+
+-- Clients (sample)
+IF NOT EXISTS (SELECT 1 FROM dbo.Clients WHERE FullName = N'Иванов Сергей Петрович') 
+  INSERT dbo.Clients(FullName,BirthDate,Phone,Email) VALUES (N'Иванов Сергей Петрович','1990-03-14',N'+7 9271001101',N'ivanov.sp@mail.ru');
+IF NOT EXISTS (SELECT 1 FROM dbo.Clients WHERE FullName = N'Петрова Анна Викторовна') 
+  INSERT dbo.Clients(FullName,BirthDate,Phone,Email) VALUES (N'Петрова Анна Викторовна','1985-07-22',N'+7 9271001102',N'petrova.av@mail.ru');
+IF NOT EXISTS (SELECT 1 FROM dbo.Clients WHERE FullName = N'Кузнецова Елена Ильинична') 
+  INSERT dbo.Clients(FullName,BirthDate,Phone,Email) VALUES (N'Кузнецова Елена Ильинична','1979-01-30',N'+7 9271001104',N'kuznetsova.ei@yandex.ru');
+IF NOT EXISTS (SELECT 1 FROM dbo.Clients WHERE FullName = N'Смирнова Ольга Николаевна') 
+  INSERT dbo.Clients(FullName,BirthDate,Phone,Email) VALUES (N'Смирнова Ольга Николаевна','1988-05-09',N'+7 9271001106',N'smirnova.on@mail.ru');
+GO
+
+-- Psychologists (sample)
+DECLARE @sp INT;
+SELECT @sp = SpecializationID FROM dbo.Specializations WHERE Name = N'CBT';
+IF NOT EXISTS (SELECT 1 FROM dbo.Psychologists WHERE FullName = N'Romanov Artem') 
+  INSERT dbo.Psychologists(FullName,SpecializationID,ExperienceYears,Fee,Phone,Email) VALUES (N'Romanov Artem',COALESCE(@sp,1),8,3500,N'+7 9111234567',N'rom@example.com');
+SELECT @sp = SpecializationID FROM dbo.Specializations WHERE Name = N'Gestalt';
+IF NOT EXISTS (SELECT 1 FROM dbo.Psychologists WHERE FullName = N'Svetlova Anna') 
+  INSERT dbo.Psychologists(FullName,SpecializationID,ExperienceYears,Fee,Phone,Email) VALUES (N'Svetlova Anna',COALESCE(@sp,2),5,3000,N'+7 9111234568',N'svetlova@example.com');
+GO
+
+-- Services (sample) - map to categories and formats
+DECLARE @cat INT, @fmt INT;
+SELECT @cat = CategoryID FROM dbo.ProblemCategories WHERE Name = N'AnxietyAndDepression';
+SELECT @fmt = FormatID FROM dbo.Formats WHERE Name = N'Offline';
+IF NOT EXISTS (SELECT 1 FROM dbo.Services WHERE Name = N'Individual Consultation')
+  INSERT dbo.Services(Name,CategoryID,DurationMin,Description,Price,FormatID) VALUES (N'Individual Consultation', COALESCE(@cat,1),50,N'One-to-one session',2500,@fmt);
+SELECT @cat = CategoryID FROM dbo.ProblemCategories WHERE Name = N'Parenting';
+SELECT @fmt = FormatID FROM dbo.Formats WHERE Name = N'Offline';
+IF NOT EXISTS (SELECT 1 FROM dbo.Services WHERE Name = N'Family Consultation')
+  INSERT dbo.Services(Name,CategoryID,DurationMin,Description,Price,FormatID) VALUES (N'Family Consultation', COALESCE(@cat,1),90,N'Session for family or couple',4500,@fmt);
+GO
+
+-- Sessions, Payments, Reviews - insert small sample only if none exist
+IF NOT EXISTS (SELECT 1 FROM dbo.Sessions)
+BEGIN
+  -- find sample ids
+  DECLARE @psych INT = (SELECT TOP(1) PsychologistID FROM dbo.Psychologists);
+  DECLARE @client INT = (SELECT TOP(1) ClientID FROM dbo.Clients);
+  DECLARE @service INT = (SELECT TOP(1) ServiceID FROM dbo.Services);
+  IF @psych IS NOT NULL AND @client IS NOT NULL AND @service IS NOT NULL
+  BEGIN
+    INSERT dbo.Sessions(PsychologistID,ClientID,ServiceID,SessionDateTime,PaymentStatus) VALUES
+      (@psych,@client,@service,'2025-10-15T14:00:00',1);
+    INSERT dbo.Sessions(PsychologistID,ClientID,ServiceID,SessionDateTime,PaymentStatus) VALUES
+      (@psych,@client,@service,'2025-10-22T14:00:00',0);
+  END
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Payments)
+BEGIN
+  DECLARE @sid INT = (SELECT TOP(1) SessionID FROM dbo.Sessions WHERE PaymentStatus = 1);
+  IF @sid IS NOT NULL
+    INSERT dbo.Payments(SessionID,Amount,PaymentDate,Method) VALUES (@sid,2500,'2025-10-15',N'Card');
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Reviews)
+BEGIN
+  DECLARE @c INT = (SELECT TOP(1) ClientID FROM dbo.Clients);
+  DECLARE @p INT = (SELECT TOP(1) PsychologistID FROM dbo.Psychologists);
+  DECLARE @s INT = (SELECT TOP(1) ServiceID FROM dbo.Services);
+  IF @c IS NOT NULL AND @p IS NOT NULL
+    INSERT dbo.Reviews(ClientID,PsychologistID,ServiceID,Rating,Text) VALUES (@c,@p,@s,5,N'Helpful session');
+END
+GO
+
+PRINT N'Schema and sample data applied. Review Messages for details.';
+GO
