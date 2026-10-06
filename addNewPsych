@@ -1,0 +1,42 @@
+USE KabinetPsychologist;
+GO
+
+-- Убедиться, что нужные специализации есть (создаём при отсутствии)
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'CBT')
+    INSERT dbo.Specializations(Name, Description) VALUES (N'CBT', N'Cognitive Behavioral Therapy');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'Gestalt')
+    INSERT dbo.Specializations(Name, Description) VALUES (N'Gestalt', N'Gestalt therapy');
+IF NOT EXISTS (SELECT 1 FROM dbo.Specializations WHERE Name = N'FamilyTherapy')
+    INSERT dbo.Specializations(Name, Description) VALUES (N'FamilyTherapy', N'Family and couple therapy');
+GO
+
+-- 1) Romanov Artem (CBT)
+DECLARE @specCBT INT = (SELECT TOP(1) SpecializationID FROM dbo.Specializations WHERE Name = N'CBT');
+IF NOT EXISTS (SELECT 1 FROM dbo.Psychologists WHERE FullName = N'Romanov Artem')
+BEGIN
+    INSERT dbo.Psychologists(FullName, SpecializationID, ExperienceYears, Fee, Phone, Email)
+    VALUES (N'Romanov Artem', @specCBT, 8, 3500, N'+7 911 123-4567', N'romanov@example.com');
+END
+
+-- 2) Svetlova Anna (Gestalt)
+DECLARE @specGestalt INT = (SELECT TOP(1) SpecializationID FROM dbo.Specializations WHERE Name = N'Gestalt');
+IF NOT EXISTS (SELECT 1 FROM dbo.Psychologists WHERE FullName = N'Svetlova Anna')
+BEGIN
+    INSERT dbo.Psychologists(FullName, SpecializationID, ExperienceYears, Fee, Phone, Email)
+    VALUES (N'Svetlova Anna', @specGestalt, 5, 3000, N'+7 911 223-4568', N'svetlova@example.com');
+END
+
+-- 3) Kovalev Petr (FamilyTherapy)
+DECLARE @specFamily INT = (SELECT TOP(1) SpecializationID FROM dbo.Specializations WHERE Name = N'FamilyTherapy');
+IF NOT EXISTS (SELECT 1 FROM dbo.Psychologists WHERE FullName = N'Kovalev Petr')
+BEGIN
+    INSERT dbo.Psychologists(FullName, SpecializationID, ExperienceYears, Fee, Phone, Email)
+    VALUES (N'Kovalev Petr', @specFamily, 12, 4500, N'+7 911 323-4569', N'kovalev@example.com');
+END
+GO
+
+-- Проверка вставки
+SELECT PsychologistID, FullName, SpecializationID, ExperienceYears, Fee, Phone, Email
+FROM dbo.Psychologists
+WHERE FullName IN (N'Romanov Artem', N'Svetlova Anna', N'Kovalev Petr');
+GO
