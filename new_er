@@ -1,0 +1,80 @@
+USE KabinetPsychologist;
+GO
+
+-- 1) Удалить старые FK из Reviews (если существуют)
+IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Reviews_Clients')
+    ALTER TABLE dbo.Reviews DROP CONSTRAINT FK_Reviews_Clients;
+
+IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Reviews_Psychologists')
+    ALTER TABLE dbo.Reviews DROP CONSTRAINT FK_Reviews_Psychologists;
+
+IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Reviews_Services')
+    ALTER TABLE dbo.Reviews DROP CONSTRAINT FK_Reviews_Services;
+GO
+
+-- 2) Добавить колонку PaymentID (если нет) и FK к Payments
+IF COL_LENGTH('dbo.Reviews', 'PaymentID') IS NULL
+BEGIN
+    ALTER TABLE dbo.Reviews ADD PaymentID INT NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.foreign_keys 
+    WHERE name = N'FK_Reviews_Payments' AND parent_object_id = OBJECT_ID(N'dbo.Reviews')
+)
+BEGIN
+    ALTER TABLE dbo.Reviews
+    ADD CONSTRAINT FK_Reviews_Payments FOREIGN KEY (PaymentID) REFERENCES dbo.Payments(PaymentID);
+END
+GO
+
+-- 3) Добавить колонку Rating (если нет) и CHECK 1..5
+IF COL_LENGTH('dbo.Reviews', 'Rating') IS NULL
+BEGIN
+    ALTER TABLE dbo.Reviews ADD Rating TINYINT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_Reviews_Rating')
+BEGIN
+    ALTER TABLE dbo.Reviews
+    ADD CONSTRAINT CK_Reviews_Rating CHECK (Rating BETWEEN 1 AND 5);
+END
+GO
+
+-- 4) Уникальный индекс на PaymentID (по одному отзыву на платёж). Фильтрированный индекс допускает множественные NULL.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes 
+    WHERE name = N'UX_Reviews_PaymentID' AND object_id = OBJECT_ID(N'dbo.Reviews')
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_Reviews_PaymentID ON dbo.Reviews(PaymentID) WHERE PaymentID IS NOT NULL;
+END
+GO
+
+-- 5) Рекомендация: опционально перенос/сопоставление существующих отзывов с платежами.
+-- Ниже шаблон, который можно выполнить вручную после проверки соответствия логики данных.
+-- Пример: сопоставить отзывы по (ClientID, PsychologistID, ServiceID) с последним платежом клиента для соответствующей сессии.
+-- Ниже комментированный пример — выполняйте только если уверены в правиле сопоставления.
+--[ 
+;WITH LastPaymentPerSession AS (
+  SELECT p.PaymentID, p.SessionID, ROW_NUMBER() OVER (PARTITION BY p.SessionID ORDER BY p.PaymentDate DESC, p.PaymentID DESC) rn
+  FROM dbo.Payments p
+)
+UPDATE r
+SET PaymentID = lp.PaymentID
+FROM dbo.Reviews r
+JOIN dbo.Sessions s
+  ON r.ClientID = s.ClientID
+ AND r.PsychologistID = s.PsychologistID
+ AND r.ServiceID = s.ServiceID
+JOIN LastPaymentPerSession lp
+  ON lp.SessionID = s.SessionID
+ AND lp.rn = 1
+WHERE r.PaymentID IS NULL;
+
+-- (раскомментируйте и адаптируйте только после ревью данных)
+
+PRINT N'Reviews schema updated: old FKs removed, PaymentID and Rating added, FK to Payments created.';
+GO
